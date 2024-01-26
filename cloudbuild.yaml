@@ -14,11 +14,17 @@ steps:
   - '${_SERVICE_NAME}'
   - '--image'
   - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
+  - '--allow-unauthenticated'
+  - '--port'
+  - '${_PORT}'
   - '--region'
   - '${_REGION}'
+  - '--project'
+  - '$PROJECT_ID'
 substitutions:
-  _REGION: 'asia-northeast3'
   _SERVICE_NAME: 'streaming-server'
+  _REGION: 'asia-northeast3'
+  _PORT: '3000'
 images:
   - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
 options:
