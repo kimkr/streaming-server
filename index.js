@@ -1,15 +1,26 @@
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
 const { validationResult, checkSchema } = require('express-validator');
+const { Server } = require('socket.io');
 const { ALLOWED_ORIGINS } = require('./config');
 const { APPLICATION_STATE } = require('./constants');
 
+const PORT = process.env.PORT || 3000;
+
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: ALLOWED_ORIGINS,
+        methods: ["GET", "POST"]
+    }
+});
+
 app.use(cors({
     credentials: true,
     origin: ALLOWED_ORIGINS
 }));
-const port = 3000;
 
 app.use(express.json());
 
@@ -38,12 +49,13 @@ app.post('/streaming/apply_host/',
         if (result?.errors?.length) {
             return res.status(400).end();
         }
+        const requestId = new Date().getTime();
         res.status(201).json({
             result: true,
             message: "Your Application is requested successfully.",
             code: "201",
             external_data: {
-                id: new Date().getTime(),
+                id: requestId,
                 before_level: APPLICATION_STATE.PENDING,
                 after_level: APPLICATION_STATE.IN_REVIEW,
                 member: {
@@ -85,6 +97,19 @@ app.post('/streaming/apply_host/',
             },
             status: APPLICATION_STATE.IN_REVIEW
         });
+
+        setTimeout(() => {
+            const socketId = requests?.[requestId];
+            if (socketId) {
+                io.to(socketId).emit("getNotification", { status: APPLICATION_STATE.QUEUED });
+            }
+        }, 5000);
+        setTimeout(() => {
+            const socketId = requests?.[requestId];
+            if (socketId) {
+                io.to(socketId).emit("getNotification", { status: APPLICATION_STATE.APPROVAL });
+            }
+        }, 10000);
     });
 
 
@@ -189,6 +214,35 @@ app.patch('/streaming/cancel_host_apply/',
         }
     });
 
-app.listen(port, () => {
-    console.log(`app listening on port ${port}`);
+
+server.listen(PORT, () => {
+    const { address, port } = server.address();
+    console.log(`App listening at ${address}:${port}`);
+});
+
+let requests = [];
+
+io.use((socket, next) => {
+    const requestId = socket.handshake.auth.requestId;
+    if (!requestId) {
+        return next(new Error("invalid requestId"));
+    }
+    socket.requestId = requestId;
+    next();
+});
+
+io.on("connection", (socket) => {
+    requests[socket.requestId] = socket.id;
+    console.log(`[${socket.requestId}] connected`);
+
+    socket.on("sendNotification", ({ requestId, status }) => {
+        const socketId = requests[requestId];
+        if (socketId) {
+            io.to(socketId).emit("getNotification", { status });
+        }
+    });
+
+    socket.on("disconnect", () => {
+        console.log("disconnected");
+    });
 });
