@@ -152,10 +152,42 @@ app.get('/streaming/list_host_apply_status/:page/:size',
                     }
                 ]
             }
-        })
-
+        });
     }
 );
+
+app.patch('/streaming/cancel_host_apply/',
+    checkSchema({
+        request_id: { isNumeric: true }
+    }, ['body']),
+    async (req, res) => {
+        try {
+            /**
+             * TODO
+             * 1. If application job is in landing queue(not handled yet)
+             *  -> pop from the queue
+             *  -> send success response
+             * 
+             * 2. Else the job is already in process
+             *  -> enqueue cancel job (update inmemory db)
+             *     -> Before (application)job handler commits the application, finally check inmemory db status
+             *     -> if it is canceled, then rollback
+             *     -> else commit
+             *  -> send (optimistic) success response
+             */
+            return res.status(200).json({
+                result: true,
+                message: "Your Application is cancelled.",
+                code: ""
+            })
+        } catch (e) {
+            return res.status(503).json({
+                result: false,
+                message: "A problem is occurred. Please try again later",
+                code: "503"
+            });
+        }
+    });
 
 app.listen(port, () => {
     console.log(`app listening on port ${port}`);
