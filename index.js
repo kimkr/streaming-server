@@ -19,6 +19,15 @@ const snsTypeValidator = (type) => {
     }
     return type === 'TWITTER' || type === 'INSTAGRAM';
 }
+
+app.post('/anonymous/sign_in/', async (req, res) => {
+    let userId = req.body.userId;
+    if (!userId) {
+        userId = new Date().getTime();
+    }
+    res.status(201).json({ userId });
+});
+
 app.post('/streaming/apply_host/',
     checkSchema({
         artist_id: { isNumeric: true },
@@ -38,6 +47,7 @@ app.post('/streaming/apply_host/',
         if (result?.errors?.length) {
             return res.status(400).end();
         }
+        const userId = req.userId;
         res.status(201).json({
             result: true,
             message: "Your Application is requested successfully.",
@@ -47,7 +57,7 @@ app.post('/streaming/apply_host/',
                 before_level: APPLICATION_STATE.PENDING,
                 after_level: APPLICATION_STATE.IN_REVIEW,
                 member: {
-                    id: 1234,
+                    id: userId,
                     level: 0,
                     profile_image: {
                         id: 2345,
@@ -86,7 +96,6 @@ app.post('/streaming/apply_host/',
             status: APPLICATION_STATE.IN_REVIEW
         });
     });
-
 
 app.get('/streaming/list_host_apply_status/:page/:size',
     checkSchema({
@@ -188,6 +197,12 @@ app.patch('/streaming/cancel_host_apply/',
             });
         }
     });
+
+app.use(async (req, res, next) => {
+    const userId = req.headers?.authorization?.split(' ')?.[1];
+    req.userId = userId;
+    next();
+});
 
 app.listen(port, () => {
     console.log(`app listening on port ${port}`);
