@@ -5,7 +5,7 @@ const { validationResult, checkSchema } = require('express-validator');
 const { Server } = require('socket.io');
 const { ALLOWED_ORIGINS } = require('./config');
 const { APPLICATION_STATE } = require('./constants');
-const redis = require('./redis');
+const { pubsub } = require('./redis');
 const { genSampleData, saveUserApplyRequests, readUserApplyRequests,
     updateApplyStatus } = require('./store');
 const { enqueueProcessingJob } = require('./queue');
@@ -71,7 +71,7 @@ app.post('/streaming/apply_host/',
         const userId = req.userId;
         console.log(`/streaming/apply_host/ userId:${userId}`);
 
-        const applyRequest = genSampleData({ userId, status: APPLICATION_STATE.IN_REVIEW });
+        const applyRequest = genSampleData({ userId, status: APPLICATION_STATE.QUEUED });
         await saveUserApplyRequests(userId, applyRequest);
         await enqueueProcessingJob({ requestId: applyRequest.id, userId });
         await updateApplyStatus(applyRequest.id, APPLICATION_STATE.QUEUED);
@@ -119,16 +119,9 @@ app.patch('/streaming/cancel_host_apply/',
     async (req, res) => {
         try {
             /**
-             * TODO
-             * 1. If application job is in landing queue(not handled yet)
-             *  -> pop from the queue
-             *  -> send success response
-             * 
-             * 2. Else the job is already in process
-             *  -> enqueue cancel job (update inmemory db)
-             *     -> Before (application)job handler commits the application, finally check inmemory db status
-             *     -> if it is canceled, then rollback
-             *     -> else commit
+             *  -> Before (application)job handler commits the application, finally check inmemory db status
+             *  -> if it is canceled, then rollback
+             *  -> else commit
              *  -> send (optimistic) success response
              */
             await updateApplyStatus(req.body.request_id, APPLICATION_STATE.CANCELED);
@@ -146,13 +139,10 @@ app.patch('/streaming/cancel_host_apply/',
         }
     });
 
-
 server.listen(PORT, () => {
     const { address, port } = server.address();
     console.log(`App listening at ${address}:${port}`);
 });
-
-let users = [];
 
 io.use((socket, next) => {
     const userId = socket.handshake.auth.userId;
@@ -164,20 +154,20 @@ io.use((socket, next) => {
 });
 
 io.on("connection", (socket) => {
-    users[socket.userId] = socket.id;
     console.log(`[${socket.userId}] connected`);
+    socket.join(socket.userId);
 
     socket.on("sendNotification", ({ userId, requestId, status }) => {
-        console.log("sendNotification");
-        console.log(userId, requestId, status);
-        
-        const socketId = users[userId];
-        if (socketId) {
-            io.to(socketId).emit("getNotification", { requestId, status });
-        }
+        io.to(userId).emit("getNotification", { requestId, status });
     });
 
     socket.on("disconnect", () => {
         console.log("disconnected");
     });
 });
+
+// CloudFunction -> REDIS Pubsub -> API(WebSocket) Server
+pubsub.subscribe("sendNotification", (message) => {
+    const { userId, requestId, status } = JSON.parse(message);
+    io.to(userId).emit("getNotification", { requestId, status });
+})

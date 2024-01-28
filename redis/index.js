@@ -9,4 +9,10 @@ const client = redis.createClient({
 });
 client.connect().catch(console.error);
 
-module.exports = client;
+const pubsub = client.duplicate(); 
+pubsub.connect().catch(console.error);
+
+module.exports = {
+    client,
+    pubsub
+};

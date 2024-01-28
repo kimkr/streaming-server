@@ -1,4 +1,4 @@
-const redis = require('../redis');
+const { client: redis } = require('../redis');
 const { genSampleData } = require('./mock');
 
 const APPLY_REQS = 'apply_reqs';
