@@ -6,7 +6,8 @@ const { Server } = require('socket.io');
 const { ALLOWED_ORIGINS } = require('./config');
 const { APPLICATION_STATE } = require('./constants');
 const redis = require('./redis');
-const { genSampleData, saveUserApplyRequests, readUserApplyRequests } = require('./store');
+const { genSampleData, saveUserApplyRequests, readUserApplyRequests,
+    updateApplyStatus } = require('./store');
 
 const PORT = process.env.PORT || 3000;
 
@@ -25,6 +26,12 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+app.use('*', async (req, res, next) => {
+    const userId = req.headers?.authorization?.split(' ')?.[1];
+    req.userId = userId;
+    next();
+});
 
 const snsTypeValidator = (type) => {
     if (!type) {
@@ -61,8 +68,11 @@ app.post('/streaming/apply_host/',
             return res.status(400).end();
         }
         const userId = req.userId;
-        const applyRequest = genSampleData({ userId });
+        console.log(`/streaming/apply_host/ userId:${userId}`);
+
+        const applyRequest = genSampleData({ userId, status: APPLICATION_STATE.IN_REVIEW });
         await saveUserApplyRequests(userId, applyRequest);
+        await updateApplyStatus(applyRequest.id, APPLICATION_STATE.IN_REVIEW);
 
         res.status(201).json({
             result: true,
@@ -71,20 +81,25 @@ app.post('/streaming/apply_host/',
             external_data: applyRequest,
             status: APPLICATION_STATE.IN_REVIEW
         });
-        await redis.set("" + applyRequest.id, APPLICATION_STATE.IN_REVIEW);
 
         setTimeout(() => {
-            redis.set("" + applyRequest.id, APPLICATION_STATE.QUEUED).catch(console.error);
-            const socketId = requests?.[applyRequest.id];
+            updateApplyStatus(applyRequest.id, APPLICATION_STATE.QUEUED).catch(console.error);
+            const socketId = users?.[userId];
             if (socketId) {
-                io.to(socketId).emit("getNotification", { status: APPLICATION_STATE.QUEUED });
+                io.to(socketId).emit("getNotification", {
+                    requestId: applyRequest.id,
+                    status: APPLICATION_STATE.QUEUED
+                });
             }
         }, 5000);
         setTimeout(() => {
-            redis.set("" + applyRequest.id, APPLICATION_STATE.APPROVAL).catch(console.error);
-            const socketId = requests?.[applyRequest.id];
+            updateApplyStatus(applyRequest.id, APPLICATION_STATE.APPROVAL).catch(console.error);
+            const socketId = users?.[userId];
             if (socketId) {
-                io.to(socketId).emit("getNotification", { status: APPLICATION_STATE.APPROVAL });
+                io.to(socketId).emit("getNotification", {
+                    requestId: applyRequest.id,
+                    status: APPLICATION_STATE.APPROVAL
+                });
             }
         }, 10000);
     });
@@ -135,6 +150,7 @@ app.patch('/streaming/cancel_host_apply/',
              *     -> else commit
              *  -> send (optimistic) success response
              */
+            await updateApplyStatus(req.body.request_id, APPLICATION_STATE.CANCELED);
             return res.status(200).json({
                 result: true,
                 message: "Your Application is cancelled.",
@@ -149,36 +165,31 @@ app.patch('/streaming/cancel_host_apply/',
         }
     });
 
-app.use(async (req, res, next) => {
-    const userId = req.headers?.authorization?.split(' ')?.[1];
-    req.userId = userId;
-    next();
-});
 
 server.listen(PORT, () => {
     const { address, port } = server.address();
     console.log(`App listening at ${address}:${port}`);
 });
 
-let requests = [];
+let users = [];
 
 io.use((socket, next) => {
-    const requestId = socket.handshake.auth.requestId;
-    if (!requestId) {
-        return next(new Error("invalid requestId"));
+    const userId = socket.handshake.auth.userId;
+    if (!userId) {
+        return next(new Error("invalid userId"));
     }
-    socket.requestId = requestId;
+    socket.userId = userId;
     next();
 });
 
 io.on("connection", (socket) => {
-    requests[socket.requestId] = socket.id;
-    console.log(`[${socket.requestId}] connected`);
+    users[socket.userId] = socket.id;
+    console.log(`[${socket.userId}] connected`);
 
-    socket.on("sendNotification", ({ requestId, status }) => {
-        const socketId = requests[requestId];
+    socket.on("sendNotification", ({ userId, requestId, status }) => {
+        const socketId = users[userId];
         if (socketId) {
-            io.to(socketId).emit("getNotification", { status });
+            io.to(socketId).emit("getNotification", { requestId, status });
         }
     });
 
