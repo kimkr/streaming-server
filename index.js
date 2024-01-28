@@ -5,6 +5,7 @@ const { validationResult, checkSchema } = require('express-validator');
 const { Server } = require('socket.io');
 const { ALLOWED_ORIGINS } = require('./config');
 const { APPLICATION_STATE } = require('./constants');
+const redis = require('./redis');
 
 const PORT = process.env.PORT || 3000;
 
@@ -97,14 +98,17 @@ app.post('/streaming/apply_host/',
             },
             status: APPLICATION_STATE.IN_REVIEW
         });
+        await redis.set("" + requestId, APPLICATION_STATE.IN_REVIEW);
 
         setTimeout(() => {
+            redis.set("" + requestId, APPLICATION_STATE.QUEUED).catch(console.error);
             const socketId = requests?.[requestId];
             if (socketId) {
                 io.to(socketId).emit("getNotification", { status: APPLICATION_STATE.QUEUED });
             }
         }, 5000);
         setTimeout(() => {
+            redis.set("" + requestId, APPLICATION_STATE.APPROVAL).catch(console.error);
             const socketId = requests?.[requestId];
             if (socketId) {
                 io.to(socketId).emit("getNotification", { status: APPLICATION_STATE.APPROVAL });

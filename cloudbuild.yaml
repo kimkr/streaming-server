@@ -18,10 +18,13 @@ steps:
   - '${_REGION}'
   - '--project'
   - '$PROJECT_ID'
+  - '--vpc-connector'
+  - 'projects/$PROJECT_ID/locations/${_REGION}/connectors/${_VPC_CONNECOTR}'
 substitutions:
   _SERVICE_NAME: 'streaming-server'
   _REGION: 'asia-northeast3'
   _PORT: '3000'
+  _VPC_CONNECOTR: 'host-streaming-connector'
 images:
   - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$COMMIT_SHA'
 options:
