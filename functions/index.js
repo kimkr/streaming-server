@@ -17,7 +17,9 @@ client.connect().catch(console.error);
 
 const updateApplyStatus = async (userId, requestId, status) => {
     await client.set(`apply_req/${requestId}`, status);
-    socket.emit("sendNotification", { userId, requestId, status });
+    socket.emit("sendNotification", { userId, requestId, status }, (val) => {
+        console.log(`sendNotification ${val}`);
+    });
 }
 
 functions.cloudEvent('processApply', async (cloudEvent) => {

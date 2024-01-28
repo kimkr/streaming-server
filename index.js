@@ -168,6 +168,9 @@ io.on("connection", (socket) => {
     console.log(`[${socket.userId}] connected`);
 
     socket.on("sendNotification", ({ userId, requestId, status }) => {
+        console.log("sendNotification");
+        console.log(userId, requestId, status);
+        
         const socketId = users[userId];
         if (socketId) {
             io.to(socketId).emit("getNotification", { requestId, status });
