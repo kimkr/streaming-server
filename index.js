@@ -5,6 +5,9 @@ const { validationResult, checkSchema } = require('express-validator');
 const { Server } = require('socket.io');
 const { ALLOWED_ORIGINS } = require('./config');
 const { APPLICATION_STATE } = require('./constants');
+const redis = require('./redis');
+const { genSampleData, saveUserApplyRequests, readUserApplyRequests,
+    updateApplyStatus } = require('./store');
 
 const PORT = process.env.PORT || 3000;
 
@@ -24,12 +27,27 @@ app.use(cors({
 
 app.use(express.json());
 
+app.use('*', async (req, res, next) => {
+    const userId = req.headers?.authorization?.split(' ')?.[1];
+    req.userId = userId;
+    next();
+});
+
 const snsTypeValidator = (type) => {
     if (!type) {
         throw Error('sns type error');
     }
     return type === 'TWITTER' || type === 'INSTAGRAM';
 }
+
+app.post('/anonymous/sign_in/', async (req, res) => {
+    let userId = req.body.userId;
+    if (!userId) {
+        userId = new Date().getTime();
+    }
+    res.status(201).json({ userId });
+});
+
 app.post('/streaming/apply_host/',
     checkSchema({
         artist_id: { isNumeric: true },
@@ -49,69 +67,42 @@ app.post('/streaming/apply_host/',
         if (result?.errors?.length) {
             return res.status(400).end();
         }
-        const requestId = new Date().getTime();
+        const userId = req.userId;
+        console.log(`/streaming/apply_host/ userId:${userId}`);
+
+        const applyRequest = genSampleData({ userId, status: APPLICATION_STATE.IN_REVIEW });
+        await saveUserApplyRequests(userId, applyRequest);
+        await updateApplyStatus(applyRequest.id, APPLICATION_STATE.IN_REVIEW);
+
         res.status(201).json({
             result: true,
             message: "Your Application is requested successfully.",
             code: "201",
-            external_data: {
-                id: requestId,
-                before_level: APPLICATION_STATE.PENDING,
-                after_level: APPLICATION_STATE.IN_REVIEW,
-                member: {
-                    id: 1234,
-                    level: 0,
-                    profile_image: {
-                        id: 2345,
-                        filename: "myprofile.png",
-                        thumb_url: "https://storeage.makestar.com/myprofile.thumb.png",
-                        mime: 'PNG'
-                    },
-                    nickname: "닉네임",
-                    user: {
-                        id: 3456,
-                        email: "sample@makestar.com",
-                        is_active: true
-                    },
-                    fandom: {
-                        id: 456,
-                        title: "ATINY",
-                        image: {
-                            id: 2345,
-                            filename: "ATINY_logo.png",
-                            thumb_url: "https://storeage.makestar.com/ATINY_logo.thumb.png",
-                            mime: 'PNG'
-                        },
-                        artist: {
-                            id: 123,
-                            name: "BTS",
-                            image: {
-                                id: 123,
-                                filename: "/images/123.svg",
-                                thumb_url: "https://storeage.makestar.com/ATEEZ_main.thumb.png",
-                                mime: 'PNG'
-                            }
-                        }
-                    }
-                },
-            },
+            external_data: applyRequest,
             status: APPLICATION_STATE.IN_REVIEW
         });
 
         setTimeout(() => {
-            const socketId = requests?.[requestId];
+            updateApplyStatus(applyRequest.id, APPLICATION_STATE.QUEUED).catch(console.error);
+            const socketId = users?.[userId];
             if (socketId) {
-                io.to(socketId).emit("getNotification", { status: APPLICATION_STATE.QUEUED });
+                io.to(socketId).emit("getNotification", {
+                    requestId: applyRequest.id,
+                    status: APPLICATION_STATE.QUEUED
+                });
             }
         }, 5000);
         setTimeout(() => {
-            const socketId = requests?.[requestId];
+            updateApplyStatus(applyRequest.id, APPLICATION_STATE.APPROVAL).catch(console.error);
+            const socketId = users?.[userId];
             if (socketId) {
-                io.to(socketId).emit("getNotification", { status: APPLICATION_STATE.APPROVAL });
+                io.to(socketId).emit("getNotification", {
+                    requestId: applyRequest.id,
+                    status: APPLICATION_STATE.APPROVAL
+                });
             }
         }, 10000);
     });
-
 
 app.get('/streaming/list_host_apply_status/:page/:size',
     checkSchema({
@@ -127,55 +118,14 @@ app.get('/streaming/list_host_apply_status/:page/:size',
                 code: "503"
             });
         }
+        const userId = req.userId;
+        const applyRequests = await readUserApplyRequests(userId);
         res.status(200).json({
             result: true,
             message: "OK",
             code: "200",
             external_data: {
-                request_list: [
-                    {
-                        id: new Date().getTime(),
-                        before_level: APPLICATION_STATE.PENDING,
-                        after_level: APPLICATION_STATE.IN_REVIEW,
-                        member: {
-                            id: 1234,
-                            level: 0,
-                            profile_image: {
-                                id: 2345,
-                                filename: "myprofile.png",
-                                thumb_url: "https://storeage.makestar.com/myprofile.thumb.png",
-                                mime: 'PNG'
-                            },
-                            nickname: "닉네임",
-                            user: {
-                                id: 3456,
-                                email: "sample@makestar.com",
-                                is_active: true
-                            },
-                            fandom: {
-                                id: 456,
-                                title: "ATINY",
-                                image: {
-                                    id: 2345,
-                                    filename: "ATINY_logo.png",
-                                    thumb_url: "https://storeage.makestar.com/ATINY_logo.thumb.png",
-                                    mime: 'PNG'
-                                },
-                                artist: {
-                                    id: 123,
-                                    name: "BTS",
-                                    image: {
-                                        id: 123,
-                                        filename: "/images/123.svg",
-                                        thumb_url: "https://storeage.makestar.com/ATEEZ_main.thumb.png",
-                                        mime: 'PNG'
-                                    }
-                                }
-                            }
-                        },
-                        status: APPLICATION_STATE.IN_REVIEW
-                    }
-                ]
+                request_list: applyRequests
             }
         });
     }
@@ -200,6 +150,7 @@ app.patch('/streaming/cancel_host_apply/',
              *     -> else commit
              *  -> send (optimistic) success response
              */
+            await updateApplyStatus(req.body.request_id, APPLICATION_STATE.CANCELED);
             return res.status(200).json({
                 result: true,
                 message: "Your Application is cancelled.",
@@ -220,25 +171,25 @@ server.listen(PORT, () => {
     console.log(`App listening at ${address}:${port}`);
 });
 
-let requests = [];
+let users = [];
 
 io.use((socket, next) => {
-    const requestId = socket.handshake.auth.requestId;
-    if (!requestId) {
-        return next(new Error("invalid requestId"));
+    const userId = socket.handshake.auth.userId;
+    if (!userId) {
+        return next(new Error("invalid userId"));
     }
-    socket.requestId = requestId;
+    socket.userId = userId;
     next();
 });
 
 io.on("connection", (socket) => {
-    requests[socket.requestId] = socket.id;
-    console.log(`[${socket.requestId}] connected`);
+    users[socket.userId] = socket.id;
+    console.log(`[${socket.userId}] connected`);
 
-    socket.on("sendNotification", ({ requestId, status }) => {
-        const socketId = requests[requestId];
+    socket.on("sendNotification", ({ userId, requestId, status }) => {
+        const socketId = users[userId];
         if (socketId) {
-            io.to(socketId).emit("getNotification", { status });
+            io.to(socketId).emit("getNotification", { requestId, status });
         }
     });
 
