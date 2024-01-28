@@ -8,6 +8,7 @@ const { APPLICATION_STATE } = require('./constants');
 const redis = require('./redis');
 const { genSampleData, saveUserApplyRequests, readUserApplyRequests,
     updateApplyStatus } = require('./store');
+const { enqueueProcessingJob } = require('./queue');
 
 const PORT = process.env.PORT || 3000;
 
@@ -72,36 +73,16 @@ app.post('/streaming/apply_host/',
 
         const applyRequest = genSampleData({ userId, status: APPLICATION_STATE.IN_REVIEW });
         await saveUserApplyRequests(userId, applyRequest);
-        await updateApplyStatus(applyRequest.id, APPLICATION_STATE.IN_REVIEW);
+        await enqueueProcessingJob({ requestId: applyRequest.id, userId });
+        await updateApplyStatus(applyRequest.id, APPLICATION_STATE.QUEUED);
 
         res.status(201).json({
             result: true,
             message: "Your Application is requested successfully.",
             code: "201",
-            external_data: applyRequest,
-            status: APPLICATION_STATE.IN_REVIEW
+            external_data: { ...applyRequest, status: APPLICATION_STATE.QUEUED },
+            status: APPLICATION_STATE.QUEUED
         });
-
-        setTimeout(() => {
-            updateApplyStatus(applyRequest.id, APPLICATION_STATE.QUEUED).catch(console.error);
-            const socketId = users?.[userId];
-            if (socketId) {
-                io.to(socketId).emit("getNotification", {
-                    requestId: applyRequest.id,
-                    status: APPLICATION_STATE.QUEUED
-                });
-            }
-        }, 5000);
-        setTimeout(() => {
-            updateApplyStatus(applyRequest.id, APPLICATION_STATE.APPROVAL).catch(console.error);
-            const socketId = users?.[userId];
-            if (socketId) {
-                io.to(socketId).emit("getNotification", {
-                    requestId: applyRequest.id,
-                    status: APPLICATION_STATE.APPROVAL
-                });
-            }
-        }, 10000);
     });
 
 app.get('/streaming/list_host_apply_status/:page/:size',
