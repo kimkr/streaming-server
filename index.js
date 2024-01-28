@@ -3,9 +3,10 @@ const cors = require('cors');
 const http = require('http');
 const { validationResult, checkSchema } = require('express-validator');
 const { Server } = require('socket.io');
+const { createAdapter } = require("@socket.io/redis-adapter");
 const { ALLOWED_ORIGINS } = require('./config');
 const { APPLICATION_STATE } = require('./constants');
-const { pubsub } = require('./redis');
+const { pubsub, pubClient, subClient } = require('./redis');
 const { genSampleData, saveUserApplyRequests, readUserApplyRequests,
     updateApplyStatus } = require('./store');
 const { enqueueProcessingJob } = require('./queue');
@@ -19,6 +20,9 @@ const io = new Server(server, {
         origin: ALLOWED_ORIGINS,
         methods: ["GET", "POST"]
     }
+});
+Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
+    io.adapter(createAdapter(pubClient, subClient));
 });
 
 app.use(cors({

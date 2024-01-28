@@ -7,12 +7,17 @@ const client = redis.createClient({
         port: REDIS_PORT,
     }
 });
-client.connect().catch(console.error);
 
 const pubsub = client.duplicate(); 
+const pubClient = client.duplicate();
+const subClient = client.duplicate();
+
+client.connect().catch(console.error);
 pubsub.connect().catch(console.error);
 
 module.exports = {
     client,
-    pubsub
+    pubsub,
+    pubClient,
+    subClient
 };
